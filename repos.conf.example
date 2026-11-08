@@ -1,10 +1,10 @@
 # prland repo list
-# Copy to ~/.config/prland/repos.conf
+# Copy to repos.conf next to prland.sh (or ~/.config/prland/repos.conf)
 #
 # name=path[|merge_method]
 #   name          what you type:  prland <name> <pr>
 #   path          local clone (SSH or HTTPS origin both work)
-#                 may use ~, $HOME, ${HOME} or other environment variables
+#                 may start with ~, $HOME or ${HOME}
 #   merge_method  optional: merge (default) | squash | rebase
 
 repo_1=~/code/repo_1
