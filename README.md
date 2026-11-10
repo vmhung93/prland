@@ -60,11 +60,16 @@ The config is read from the first of these that exists:
 ## Usage
 
 ```bash
-prland <repo_name> <pr_number|pr_url>
-prland <pr_url>        # no config needed; skips local branch cleanup
-prland list            # show configured repos
+prland [--skip-review] <repo_name> <pr_number|pr_url>
+prland [--skip-review] <pr_url>   # no config needed; skips local branch cleanup
+prland list                       # show configured repos
 prland --help
 ```
+
+`--skip-review` skips the Claude review and goes straight to approve, then
+merge (merge only for your own PR). It still shows merge readiness and asks
+once before merging, and still offers branch cleanup. `claude` isn't needed
+in this mode.
 
 Reports are saved as `reports/<owner>_<repo>/<pr>-<sha>.md` next to the
 script. If you run prland again on the same commit, it offers to reuse the

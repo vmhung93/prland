@@ -2,10 +2,12 @@
 # prland — AI review, approve, merge and clean up a GitHub PR from the terminal.
 #
 # Usage:
-#   prland <repo_name> <pr_number|pr_url>
-#   prland <pr_url>                 # repo resolved from the URL
-#   prland list                     # show configured repos
+#   prland [--skip-review] <repo_name> <pr_number|pr_url>
+#   prland [--skip-review] <pr_url>   # repo resolved from the URL
+#   prland list                       # show configured repos
 #   prland --help
+#
+#   --skip-review   no AI review: approve, then merge (can go anywhere)
 #
 # Requirements: git, gh (logged in: `gh auth login`), claude (Claude Code CLI)
 # Config:       repos.conf next to this script, else ~/.config/prland/repos.conf
@@ -317,7 +319,23 @@ main() {
     list-names) config_names; exit 0 ;;
   esac
 
-  for cmd in git gh claude; do
+  # --- Flags (allowed anywhere among the arguments) ------------------------
+  SKIP_REVIEW=false
+  local -a args=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --skip-review) SKIP_REVIEW=true ;;
+      -h|--help) usage; exit 0 ;;
+      -*) die "Unknown option: $arg (see --help)" ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+  set -- "${args[@]}"
+
+  local -a required=(git gh)
+  [[ "$SKIP_REVIEW" == false ]] && required+=(claude)
+  for cmd in "${required[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is not installed or not on PATH."
   done
   gh auth status >/dev/null 2>&1 || die "gh is not logged in. Run: gh auth login"
@@ -369,44 +387,48 @@ main() {
   [[ "$PR_DRAFT" == "true" ]] && warn "This PR is a draft."
 
   # --- Step 1: diff + AI review --------------------------------------------
-  local slug_dir="${REPO_SLUG//\//_}"
-  local report="$REPORT_DIR/$slug_dir/${PR_NUMBER}-${PR_SHA:0:7}.md"
-  mkdir -p "$(dirname "$report")"
+  if [[ "$SKIP_REVIEW" == true ]]; then
+    warn "Skipping the AI review (--skip-review)."
+  else
+    local slug_dir="${REPO_SLUG//\//_}"
+    local report="$REPORT_DIR/$slug_dir/${PR_NUMBER}-${PR_SHA:0:7}.md"
+    mkdir -p "$(dirname "$report")"
 
-  local reuse=false
-  if [[ -s "$report" ]]; then
-    info "A review for this exact commit (${PR_SHA:0:7}) already exists."
-    confirm "Reuse it instead of running Claude again?" && reuse=true
-  fi
-
-  if [[ "$reuse" == false ]]; then
-    local diff_file skipped_file
-    TMP_DIR="$(mktemp -d)"; trap 'rm -rf "${TMP_DIR:-}"' EXIT
-    diff_file="$TMP_DIR/pr.diff"; skipped_file="$TMP_DIR/skipped.txt"; : >"$skipped_file"
-
-    gh pr diff "$PR_NUMBER" -R "$REPO_SLUG" | filter_diff "$skipped_file" >"$diff_file" \
-      || die "Could not fetch the diff."
-
-    SKIPPED_NOTE=""
-    if [[ -s "$skipped_file" ]]; then
-      info "Excluded from review: $(paste -sd ', ' "$skipped_file")"
-      SKIPPED_NOTE="(Generated/lock files excluded from the diff: $(paste -sd ', ' "$skipped_file"))"
+    local reuse=false
+    if [[ -s "$report" ]]; then
+      info "A review for this exact commit (${PR_SHA:0:7}) already exists."
+      confirm "Reuse it instead of running Claude again?" && reuse=true
     fi
 
-    local size; size=$(wc -c <"$diff_file")
-    [[ "$size" -gt 0 ]] || die "Diff is empty after filtering."
-    if ((size > MAX_DIFF_BYTES)); then
-      warn "Diff is large ($((size / 1024)) KB). The review may be slow or shallow."
-      confirm "Continue anyway?" || exit 0
+    if [[ "$reuse" == false ]]; then
+      local diff_file skipped_file
+      TMP_DIR="$(mktemp -d)"; trap 'rm -rf "${TMP_DIR:-}"' EXIT
+      diff_file="$TMP_DIR/pr.diff"; skipped_file="$TMP_DIR/skipped.txt"; : >"$skipped_file"
+
+      gh pr diff "$PR_NUMBER" -R "$REPO_SLUG" | filter_diff "$skipped_file" >"$diff_file" \
+        || die "Could not fetch the diff."
+
+      SKIPPED_NOTE=""
+      if [[ -s "$skipped_file" ]]; then
+        info "Excluded from review: $(paste -sd ', ' "$skipped_file")"
+        SKIPPED_NOTE="(Generated/lock files excluded from the diff: $(paste -sd ', ' "$skipped_file"))"
+      fi
+
+      local size; size=$(wc -c <"$diff_file")
+      [[ "$size" -gt 0 ]] || die "Diff is empty after filtering."
+      if ((size > MAX_DIFF_BYTES)); then
+        warn "Diff is large ($((size / 1024)) KB). The review may be slow or shallow."
+        confirm "Continue anyway?" || exit 0
+      fi
+
+      info "Claude is reviewing the diff ($((size / 1024)) KB)…"
+      run_review "$diff_file" "$report"
     fi
 
-    info "Claude is reviewing the diff ($((size / 1024)) KB)…"
-    run_review "$diff_file" "$report"
+    title "Review report"
+    show_report "$report"
+    printf '\n%s\n' "${DIM}Saved: $report${RESET}"
   fi
-
-  title "Review report"
-  show_report "$report"
-  printf '\n%s\n' "${DIM}Saved: $report${RESET}"
 
   # --- Merge readiness ------------------------------------------------------
   title "Merge readiness"
@@ -436,7 +458,11 @@ main() {
 
   # --- Step 2: decide ------------------------------------------------------
   local choice
-  if [[ "$own_pr" == true ]]; then
+  if [[ "$SKIP_REVIEW" == true ]]; then
+    # Straight to approve + merge (merge only for your own PR).
+    choice=1
+    [[ "$own_pr" == true ]] && { warn "This is your own PR — merging without approval."; choice=merge_only; }
+  elif [[ "$own_pr" == true ]]; then
     warn "This is your own PR — GitHub does not let you approve it."
     choice=$(choose "What next?" "Merge this PR (no approval)" "Done" "Need to double check by my reviewer")
     [[ "$choice" == 1 ]] && choice=merge_only
@@ -459,7 +485,11 @@ main() {
     ok "Approved PR #$PR_NUMBER."
   fi
 
-  confirm "Merge '$PR_TITLE' ($PR_HEAD → $PR_BASE) with --$MERGE_METHOD?" || { info "Not merged."; exit 0; }
+  printf '\n%s\n' "${BOLD}Ready to merge PR #$PR_NUMBER${RESET} · $PR_TITLE"
+  printf '  %s %s\n' "${DIM}from  ${RESET}" "${CYAN}$PR_HEAD${RESET}"
+  printf '  %s %s\n' "${DIM}into  ${RESET}" "${GREEN}$PR_BASE${RESET}"
+  printf '  %s %s\n' "${DIM}method${RESET}" "$MERGE_METHOD"
+  confirm "Merge now?" || { info "Not merged."; exit 0; }
 
   if ! gh pr merge "$PR_NUMBER" -R "$REPO_SLUG" "--$MERGE_METHOD"; then
     err "Merge failed (see message above)."
