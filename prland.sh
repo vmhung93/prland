@@ -380,8 +380,11 @@ main() {
 
   title "PR #$PR_NUMBER · $REPO_SLUG"
   printf '%s\n' "${BOLD}${PR_TITLE}${RESET}"
-  printf '%s\n' "${DIM}by @$PR_AUTHOR · $PR_HEAD → $PR_BASE · $PR_FILES files, +$PR_ADD/-$PR_DEL${RESET}"
-  printf '%s\n' "${DIM}$PR_URL${RESET}"
+  printf '  %s %s\n' "${DIM}author${RESET}" "@$PR_AUTHOR"
+  printf '  %s %s\n' "${DIM}from  ${RESET}" "${CYAN}$PR_HEAD${RESET}"
+  printf '  %s %s\n' "${DIM}into  ${RESET}" "${GREEN}$PR_BASE${RESET}"
+  printf '  %s %s\n' "${DIM}size  ${RESET}" "$PR_FILES files, ${GREEN}+$PR_ADD${RESET} / ${RED}-$PR_DEL${RESET}"
+  printf '  %s %s\n' "${DIM}url   ${RESET}" "$PR_URL"
 
   [[ "$PR_STATE" == "OPEN" ]] || die "PR is $PR_STATE, nothing to do."
   [[ "$PR_DRAFT" == "true" ]] && warn "This PR is a draft."
