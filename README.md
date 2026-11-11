@@ -9,7 +9,7 @@ prland service 123
 
 1. **Review:** fetches the PR diff, leaves out lock and generated files, and
    asks Claude for a short colored report: verdict and risk level, highlight
-   changes, risks, potential issues, suggestions, and what to check before merging.
+   changes, risks (with the `path:line` and code that causes each), potential issues, suggestions, and what to check before merging.
 2. **Merge readiness:** CI checks, merge conflicts, branch protection.
 3. **Decide:** approve and merge, just approve, or leave it for a reviewer.
 4. **Clean up:** offers to delete the merged branch (remote and local).

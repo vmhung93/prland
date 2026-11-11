@@ -64,7 +64,14 @@ ok()    { printf '%s\n' "${GREEN}✓${RESET} $*"; }
 warn()  { printf '%s\n' "${YELLOW}!${RESET} $*"; }
 err()   { printf '%s\n' "${RED}✗${RESET} $*" >&2; }
 die()   { err "$*"; exit 1; }
-title() { printf '\n%s\n' "${BOLD}━━ $* ━━${RESET}"; }
+# Section title in a rounded box sized to the text.
+title() {
+  local text="$*" line
+  line="$(printf '%*s' $(( ${#text} + 2 )) '' | sed 's/ /─/g')"
+  printf '\n%s\n%s\n%s\n' "${DIM}╭${line}╮${RESET}" \
+    "${DIM}│${RESET} ${BOLD}${text}${RESET} ${DIM}│${RESET}" \
+    "${DIM}╰${line}╯${RESET}"
+}
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
@@ -209,7 +216,11 @@ One line: Risk level **Low / Medium / High**, then a one-sentence summary of wha
 Bullets on things that could break production, data, security, performance or
 backwards compatibility (e.g. DB migrations, API contract changes, auth/config
 changes, dependency upgrades, concurrency, N+1 queries, transaction boundaries).
-Write "None found" if there are none.
+Each risk as: \`path:line\` — risk — why it matters, followed by the line(s) of
+code from the diff that cause it (at most 5 lines, copied verbatim without the
+leading +/-), in a fenced code block on its own lines right after the bullet.
+Take line numbers from the hunk headers (new-file side; old-file side for
+removed lines). Write "None found" if there are none.
 
 ## Potential issues
 Concrete bugs or code smells, each as: \`path:line\` — problem — why it matters.
@@ -251,8 +262,28 @@ run_review() {
 show_report() {
   local report="$1"
   if [[ -z "$RESET" ]]; then cat "$report"; return; fi  # not a terminal
+  local width; width="$(tput cols 2>/dev/null || echo "${COLUMNS:-100}")"
+  [[ "$width" =~ ^[0-9]+$ ]] && (( width >= 40 )) || width=100
   awk -v B="$BOLD" -v D="$DIM" -v R="$RESET" -v RED="$RED" -v GRN="$GREEN" \
-      -v YLW="$YELLOW" -v BLU="$BLUE" -v MAG="$MAGENTA" -v CYN="$CYAN" '
+      -v YLW="$YELLOW" -v BLU="$BLUE" -v MAG="$MAGENTA" -v CYN="$CYAN" \
+      -v W="$width" '
+    # Visible width: color codes take no space on screen.
+    function vlen(s) { gsub(/\033\[[0-9;]*m/, "", s); return length(s) }
+    # Prints prefix + text, wrapped at spaces to fit W columns; continuation
+    # lines are indented to line up under the start of the text.
+    function wrap(prefix, text,   pad, n, words, i, line, cur, sep) {
+      pad = sprintf("%" vlen(prefix) "s", "")
+      n = split(text, words, / +/)
+      line = prefix; cur = vlen(prefix); sep = ""
+      for (i = 1; i <= n; i++) {
+        if (words[i] == "") continue
+        if (sep != "" && cur + 1 + vlen(words[i]) > W - 1) {
+          print line; line = pad; cur = length(pad); sep = ""
+        }
+        line = line sep words[i]; cur += length(sep) + vlen(words[i]); sep = " "
+      }
+      print line
+    }
     function inline(s,   out, tok, inner, c) {
       out = ""
       while (match(s, /`[^`]+`|\*\*[^*]+\*\*/)) {
@@ -273,8 +304,12 @@ show_report() {
       return out s
     }
     { prev = last; last = $0 }
-    /^```/ { fence = !fence; next }
-    fence  { print "    " D $0 R; next }
+    /^[ \t]*```/ { fence = !fence; if (fence) { match($0, /^[ \t]*/); find = RLENGTH }; next }
+    fence  {
+      line = $0   # drop the fence indentation, but only whitespace
+      for (k = 0; k < find && substr(line, 1, 1) ~ /[ \t]/; k++) line = substr(line, 2)
+      print "      " D line R; next
+    }
     /^#+[ \t]/ {
       h = $0; sub(/^#+[ \t]+/, "", h); l = tolower(h)
       col = B
@@ -290,14 +325,15 @@ show_report() {
     /^[ \t]*[-*+][ \t]+/ {
       match($0, /^[ \t]*/); ind = substr($0, 1, RLENGTH)
       rest = $0; sub(/^[ \t]*[-*+][ \t]+/, "", rest)
-      print "  " ind col "•" R " " inline(rest); next
+      wrap("  " ind col "•" R " ", inline(rest)); next
     }
     /^[ \t]*[0-9]+[.)][ \t]+/ {
       match($0, /^[ \t]*[0-9]+[.)]/); num = substr($0, 1, RLENGTH)
       rest = substr($0, RLENGTH + 1); sub(/^[ \t]+/, "", rest)
-      print "  " col num R " " inline(rest); next
+      wrap("  " col num R " ", inline(rest)); next
     }
-    { print ($0 == "" ? "" : "  " inline($0)) }
+    $0 == "" { print ""; next }
+    { match($0, /^[ \t]*/); wrap("  " substr($0, 1, RLENGTH), inline(substr($0, RLENGTH + 1))) }
   ' "$report"
 }
 
