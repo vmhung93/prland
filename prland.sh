@@ -246,7 +246,7 @@ run_review() {
   # and cannot touch the repo or GitHub. The script itself does approve/merge.
   if ! (cd "$workdir" && claude -p "$(build_prompt)" \
           --output-format text \
-          --disallowedTools "Bash Read Edit Write MultiEdit NotebookEdit Glob Grep WebFetch WebSearch Task" \
+          --disallowedTools "Bash Read Edit Write NotebookEdit Glob Grep WebFetch WebSearch Task" \
           "${model_args[@]}" <"$diff_file") >"$report.tmp"; then
     rm -rf "$workdir" "$report.tmp"
     die "Claude review failed. Check that 'claude' works on its own."
