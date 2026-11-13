@@ -219,6 +219,8 @@ changes, dependency upgrades, concurrency, N+1 queries, transaction boundaries).
 Each risk as: \`path:line\` — risk — why it matters, followed by the line(s) of
 code from the diff that cause it (at most 5 lines, copied verbatim without the
 leading +/-), in a fenced code block on its own lines right after the bullet.
+After the code block, add one line starting with "Fix:" (not a bullet) giving a
+short, concrete way to resolve the risk, based only on what the diff shows.
 Take line numbers from the hunk headers (new-file side; old-file side for
 removed lines). Write "None found" if there are none.
 
@@ -331,6 +333,10 @@ show_report() {
       match($0, /^[ \t]*[0-9]+[.)]/); num = substr($0, 1, RLENGTH)
       rest = substr($0, RLENGTH + 1); sub(/^[ \t]+/, "", rest)
       wrap("  " col num R " ", inline(rest)); next
+    }
+    /^[ \t]*(\*\*)?Fix:/ {
+      rest = $0; sub(/^[ \t]*(\*\*)?Fix:(\*\*)?[ \t]*/, "", rest)
+      wrap("    " B GRN "Fix:" R " ", inline(rest)); next
     }
     $0 == "" { print ""; next }
     { match($0, /^[ \t]*/); wrap("  " substr($0, 1, RLENGTH), inline(substr($0, RLENGTH + 1))) }
@@ -530,7 +536,9 @@ main() {
   printf '  %s %s\n' "${DIM}method${RESET}" "$MERGE_METHOD"
   confirm "Merge now?" || { info "Not merged."; exit 0; }
 
-  if ! gh pr merge "$PR_NUMBER" -R "$REPO_SLUG" "--$MERGE_METHOD"; then
+  local merge_out
+  if ! merge_out=$(gh pr merge "$PR_NUMBER" -R "$REPO_SLUG" "--$MERGE_METHOD" 2>&1); then
+    [[ -n "$merge_out" ]] && printf '%s\n' "$merge_out" >&2
     err "Merge failed (see message above)."
     if confirm "Enable auto-merge so GitHub merges it once requirements pass?"; then
       gh pr merge "$PR_NUMBER" -R "$REPO_SLUG" "--$MERGE_METHOD" --auto \
